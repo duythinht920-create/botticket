@@ -265,14 +265,39 @@ def build_panel_view(show_delete_all: bool = False) -> discord.ui.View:
     return view
 
 
+async def ensure_deferred(interaction: discord.Interaction) -> bool:
+    if interaction.response.is_done():
+        return True
+    try:
+        await interaction.response.defer(ephemeral=True)
+        return True
+    except discord.NotFound:
+        return False
+    except discord.HTTPException as exc:
+        if exc.code in (40060, 10062):
+            return False
+        raise
+
+
+async def safe_ephemeral(interaction: discord.Interaction, content: str = "", **kwargs):
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(content, ephemeral=True, **kwargs)
+        else:
+            await interaction.response.send_message(content, ephemeral=True, **kwargs)
+    except discord.HTTPException as exc:
+        if exc.code not in (40060, 10062):
+            print(f"[WARN] safe_ephemeral: {exc}")
+
+
 async def handle_create_ticket(interaction: discord.Interaction):
     try:
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+        if not await ensure_deferred(interaction):
+            return
 
         guild = interaction.guild
         if not guild:
-            await interaction.followup.send("Lenh nay chi dung trong server.", ephemeral=True)
+            await safe_ephemeral(interaction, "Lenh nay chi dung trong server.")
             return
 
         user = interaction.user
@@ -282,9 +307,9 @@ async def handle_create_ticket(interaction: discord.Interaction):
             if info.get("user_id") == user.id:
                 channel = guild.get_channel(int(channel_id))
                 if channel:
-                    await interaction.followup.send(
+                    await safe_ephemeral(
+                        interaction,
                         f"Ban da co ticket mo: {channel.mention}",
-                        ephemeral=True,
                     )
                     return
 
@@ -356,7 +381,7 @@ async def handle_create_ticket(interaction: discord.Interaction):
             color=PANEL_COLOR,
         )
         success_embed.set_footer(text="BotTicket TDT")
-        await interaction.followup.send(embed=success_embed, ephemeral=True)
+        await safe_ephemeral(interaction, embed=success_embed)
 
         if config.LOG_CHANNEL_ID:
             log_channel = guild.get_channel(config.LOG_CHANNEL_ID)
@@ -370,18 +395,13 @@ async def handle_create_ticket(interaction: discord.Interaction):
                 await log_channel.send(embed=log_embed)
 
     except discord.Forbidden:
-        msg = "Bot khong co quyen tao kenh. Can quyen Manage Channels."
-        if interaction.response.is_done():
-            await interaction.followup.send(msg, ephemeral=True)
-        else:
-            await interaction.response.send_message(msg, ephemeral=True)
+        await safe_ephemeral(
+            interaction,
+            "Bot khong co quyen tao kenh. Can quyen Manage Channels.",
+        )
     except Exception as exc:
         print(f"[ERROR] create_ticket: {type(exc).__name__}: {exc}")
-        msg = f"Loi tao ticket: {exc}"
-        if interaction.response.is_done():
-            await interaction.followup.send(msg, ephemeral=True)
-        else:
-            await interaction.response.send_message(msg, ephemeral=True)
+        await safe_ephemeral(interaction, "Loi tao ticket. Thu lai sau.")
 
 
 class TicketControlView(discord.ui.View):
